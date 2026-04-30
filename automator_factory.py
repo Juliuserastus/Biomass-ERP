@@ -1,0 +1,65 @@
+import requests
+import json
+import pandas as pd
+
+# 1. Setup & Credentials
+NOTION_TOKEN = "ENV_VAR_NOTION_TOKEN"  # Replace with your actual token or use environment variable
+OUTPUT_DB_ID = "ENV_VAR_OUTPUT_DB_ID"  # Replace with your actual database ID or use environment variable
+
+headers = {
+    "Authorization": f"Bearer {NOTION_TOKEN}",
+    "Notion-Version": "2022-06-28"
+}
+
+print("Reading and cleaning factory data...")
+
+# 2. Data Engineering & Cleaning
+# Read the CSV
+df = pd.read_csv('raw_production_data.csv')
+
+# SAFETY NET 1: Drop any rows that are missing crucial data
+df = df.dropna(subset=['Sawdust_Input_kg', 'Binder_Input_kg', 'Final_Yield_kg'])
+
+# Calculate Metrics
+df['Total_Input'] = df['Sawdust_Input_kg'] + df['Binder_Input_kg']
+df['Efficiency'] = (df['Final_Yield_kg'] / df['Total_Input']) * 100
+
+print("Data processed! Pushing to Notion...")
+
+# 3. The API Loop with Error Handling
+url = "https://api.notion.com/v1/pages"
+
+for index, row in df.iterrows():
+    # SAFETY NET 2: The Try-Except Block
+    try:
+        new_page_data = {
+            "parent": {"database_id": OUTPUT_DB_ID},
+            "properties": {
+                "Log ID": {
+                    "title": [{"text": {"content": str(row['Batch_ID'])}}]
+                },
+                "Briquettes Yield (Kgs)": {
+                    "number": float(row['Final_Yield_kg'])
+                },
+                "Yield Efficiency (%)": {
+                    "number": float(row['Efficiency'])
+                }
+            }
+        }
+        
+        response = requests.post(url, headers=headers, data=json.dumps(new_page_data))
+        
+        # Check if the API accepted it
+        if response.status_code == 200:
+            print(f"Success: {row['Batch_ID']} logged to Notion.")
+        else:
+            print(f"API Error on {row['Batch_ID']}: Status {response.status_code}")
+            print("Details:", response.text)
+            
+    except Exception as e:
+        # If the code crashes (e.g., trying to turn text into a float), it catches it here
+        print(f"System Error processing {row['Batch_ID']}: {e}")
+        
+
+print("Sync Complete.")
+
